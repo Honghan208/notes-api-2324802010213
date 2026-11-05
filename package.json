@@ -1,0 +1,27 @@
+{
+  "name": "notes-api-2324802010213",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Honghan208/notes-api-2324802010213.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Honghan208/notes-api-2324802010213/issues"
+  },
+  "homepage": "https://github.com/Honghan208/notes-api-2324802010213#readme",
+  "dependencies": {
+    "express": "^5.3.0"
+  }
+}

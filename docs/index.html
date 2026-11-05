@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bài 1 - Hello Cloud API</title>
+<style>
+  :root { --bg:#fff; --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --head:#f6f8fa; --accent:#0969da; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --line:#3d444d; --head:#161b22; --accent:#4493f8; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:1.75rem; line-height:1.25; margin:0 0 4px; }
+  h2 { font-size:1.2rem; margin:36px 0 12px; }
+  p.sub { color:var(--muted); margin:0; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; min-width:560px; }
+  th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--head); }
+  code { font-family:ui-monospace,Consolas,monospace; font-size:.92em; overflow-wrap:anywhere; }
+  li { margin-bottom:10px; }
+  .note { color:var(--muted); font-size:.92rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bài 1: Lập trình trên máy ảo đám mây đầu tiên</h1>
+  <p class="sub">MSSV 2324802010213 · Repo <code>notes-api-2324802010213</code> · Thực hiện ngày 05/11/2026</p>
+
+  <h2>1. Bảng so sánh</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Tiêu chí</th><th>Máy cá nhân</th><th>Codespace</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Thời gian từ lúc bắt đầu đến khi chạy được <code>node -v</code></td>
+        <td>Chưa đo: máy chưa cài Node.js</td>
+        <td>2 phút 43 giây (07:10:45 → 07:13:29 UTC, theo creation log của lần rebuild)</td>
+      </tr>
+      <tr>
+        <td>Số CPU, RAM</td>
+        <td>Intel Core i3-1005G1: 2 nhân, 4 luồng; RAM 7,7 GB (thông tin hệ thống)</td>
+        <td><code>cpus: 2</code>, <code>memoryGB: 7.8</code> (từ API)</td>
+      </tr>
+      <tr>
+        <td>Hệ điều hành</td>
+        <td>Windows 11 Home Single Language (bản dựng 22631)</td>
+        <td><code>Linux 6.8.0-1064-azure</code></td>
+      </tr>
+      <tr>
+        <td>Cách truy cập từ thiết bị khác</td>
+        <td>Chỉ trong cùng mạng LAN qua IP nội bộ và phải mở tường lửa; ra Internet cần cấu hình thêm</td>
+        <td>Đổi cổng 3000 sang Public, mở URL dạng <code>https://&lt;tên&gt;-3000.app.github.dev</code> từ bất kỳ đâu có Internet</td>
+      </tr>
+      <tr>
+        <td>Chi phí, đo bằng gì</td>
+        <td>Trả một lần khi mua máy, cộng tiền điện; không đo theo giờ dùng</td>
+        <td>Đo bằng core-giờ (số core × giờ chạy). Ước tính 1–2 core-giờ cho bài này (2 core, dưới 1 giờ); trang Billing chưa hiện số liệu ngay sau khi làm</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note">Lần tạo đầu tiên, codespace rơi vào recovery mode vì tính năng <code>docker-in-docker</code> dùng tùy chọn <code>moby</code> không hỗ trợ Debian trixie. Đã sửa bằng <code>"moby": false</code> trong <code>devcontainer.json</code> rồi rebuild, nên con số trên là thời gian rebuild.</p>
+
+  <h2>2. Năm đặc tính NIST</h2>
+  <ul>
+    <li><strong>Tự phục vụ theo yêu cầu:</strong> tự bấm Create codespace là có máy ảo, không cần nhờ ai cấp phát.</li>
+    <li><strong>Truy cập mạng rộng:</strong> lập trình bằng trình duyệt và mở API qua URL công khai từ điện thoại.</li>
+    <li><strong>Gộp tài nguyên:</strong> máy 2 core, 8 GB được cấp từ kho chung chạy trên Azure (<code>platform</code> có hậu tố <code>azure</code>); sau Stop/Start, <code>uptimeSec</code> bắt đầu lại từ đầu.</li>
+    <li><strong>Co giãn nhanh:</strong> có thể đổi loại máy (machine type) nhiều core hơn hoặc Stop để trả tài nguyên, không cần mua phần cứng.</li>
+    <li><strong>Dịch vụ đo lường được:</strong> mức dùng được tính bằng core-giờ và xem tại Settings → Billing → Usage.</li>
+  </ul>
+
+  <h2>3. Câu hỏi phản biện</h2>
+  <p><strong>Câu 1. Trường <code>host</code> có đổi sau Stop/Start không?</strong> Không đổi: vẫn là <code>codespaces-ca48c7</code>. Nhưng <code>uptimeSec</code> giảm từ 1749 xuống 296, tức máy đã khởi động lại. Vậy <code>host</code> là tên gắn với codespace, không chứng minh máy vật lý vẫn là một. Tài nguyên tính toán được trả về khi Stop và cấp lại khi Start từ kho chung, còn dữ liệu trong <code>/workspaces</code> vẫn được giữ.</p>
+  <p class="note">Phép thử được làm cách nhau vài phút trong ngày 05/11/2026, chưa đủ một ngày như đề yêu cầu.</p>
+  <p><strong>Câu 2. Codespaces là IaaS, PaaS hay SaaS?</strong> Gần nhất với PaaS. GitHub quản lý phần cứng, máy ảo và hệ điều hành; sinh viên chỉ quản lý mã nguồn và khai báo runtime trong <code>devcontainer.json</code>. Không phải IaaS vì không tự cài và vận hành hệ điều hành. Cũng không hẳn SaaS vì người dùng vẫn tự cấu hình runtime và viết, chạy ứng dụng của mình, dù giao diện VS Code trên web mang dáng dấp SaaS.</p>
+  <p><strong>Câu 3. Hạn chế đã khắc phục và rủi ro mới.</strong> Hai hạn chế của cách cài trên từng máy lab: mất thời gian cài lặp lại trên mỗi máy, và phiên bản không đồng nhất giữa các máy. Rủi ro mới: phụ thuộc vào nhà cung cấp và Internet, thêm nguy cơ lộ dữ liệu nếu quên đặt cổng về Private hoặc hao hạn mức nếu quên Stop. Chính lỗi <code>moby</code> ở trên cho thấy một thay đổi ở image nền có thể làm hỏng môi trường của cả lớp cùng lúc.</p>
+</main>
+</body>
+</html>
