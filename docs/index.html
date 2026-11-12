@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bài 1 - Hello Cloud API</title>
+<title>Notes API - Bài 1, Bài 2</title>
 <style>
   :root { --bg:#fff; --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --head:#f6f8fa; --accent:#0969da; }
   @media (prefers-color-scheme: dark) {
@@ -21,12 +21,16 @@
   code { font-family:ui-monospace,Consolas,monospace; font-size:.92em; overflow-wrap:anywhere; }
   li { margin-bottom:10px; }
   .note { color:var(--muted); font-size:.92rem; }
+  pre { background:var(--head); border:1px solid var(--line); border-radius:6px; padding:12px; overflow-x:auto; font-size:.88rem; line-height:1.45; }
+  hr { border:0; border-top:1px solid var(--line); margin:48px 0 32px; }
+  .toc a { color:var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <h1>Bài 1: Lập trình trên máy ảo đám mây đầu tiên</h1>
   <p class="sub">MSSV 2324802010213 · Repo <code>notes-api-2324802010213</code> · Thực hiện ngày 05/11/2026</p>
+  <p class="toc">Xem thêm: <a href="#bai2">Bài 2. Ảo hóa, container và mô phỏng trung tâm dữ liệu</a></p>
 
   <h2>1. Bảng so sánh</h2>
   <div class="scroll">
@@ -77,6 +81,73 @@
   <p class="note">Phép thử được làm cách nhau vài phút trong ngày 05/11/2026, chưa đủ một ngày như đề yêu cầu.</p>
   <p><strong>Câu 2. Codespaces là IaaS, PaaS hay SaaS?</strong> Gần nhất với PaaS. GitHub quản lý phần cứng, máy ảo và hệ điều hành; sinh viên chỉ quản lý mã nguồn và khai báo runtime trong <code>devcontainer.json</code>. Không phải IaaS vì không tự cài và vận hành hệ điều hành. Cũng không hẳn SaaS vì người dùng vẫn tự cấu hình runtime và viết, chạy ứng dụng của mình, dù giao diện VS Code trên web mang dáng dấp SaaS.</p>
   <p><strong>Câu 3. Hạn chế đã khắc phục và rủi ro mới.</strong> Hai hạn chế của cách cài trên từng máy lab: mất thời gian cài lặp lại trên mỗi máy, và phiên bản không đồng nhất giữa các máy. Rủi ro mới: phụ thuộc vào nhà cung cấp và Internet, thêm nguy cơ lộ dữ liệu nếu quên đặt cổng về Private hoặc hao hạn mức nếu quên Stop. Chính lỗi <code>moby</code> ở trên cho thấy một thay đổi ở image nền có thể làm hỏng môi trường của cả lớp cùng lúc.</p>
+
+  <hr>
+  <h1 id="bai2">Bài 2: Ảo hóa, container và mô phỏng trung tâm dữ liệu</h1>
+  <p class="sub">Thực hiện ngày 12/11/2026 trên cùng codespace của bài 1 · Docker 29.9.3 · OpenJDK 25 · CloudSim Plus 9.0.0</p>
+
+  <h2>1. Image trên GHCR</h2>
+  <p>Package công khai: <a href="https://github.com/users/Honghan208/packages/container/package/notes-api"><code>ghcr.io/honghan208/notes-api:1.0</code></a> (digest <code>sha256:56cc1197…2b45</code>).</p>
+  <p>Kiểm tra: sau <code>docker logout ghcr.io</code>, xóa notes1, notes2 và cả hai image cục bộ, lệnh <code>docker run -d -p 3000:3000 ghcr.io/honghan208/notes-api:1.0</code> vẫn kéo được image và API trả JSON. Như vậy image tải được mà không cần đăng nhập.</p>
+  <p class="note">Docker 29 dùng containerd image store và gửi kèm manifest attestation, nên lần <code>docker push</code> đầu bị GHCR trả "denied" ở bước manifest. Lệnh <code>docker push --platform linux/amd64 …</code> đẩy riêng manifest của nền tảng amd64 và thành công.</p>
+
+  <h2>2. Dockerfile</h2>
+<pre><code>FROM node:22-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY src ./src
+ENV PORT=3000
+EXPOSE 3000
+USER node
+CMD ["node", "src/server.js"]</code></pre>
+  <p><code>.dockerignore</code> loại <code>node_modules</code>, <code>.env</code>, <code>.git</code>, <code>docs</code> khỏi build context.</p>
+
+  <h2>3. Hai bản sao có giới hạn tài nguyên</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Container</th><th>Lệnh chạy</th><th>host</th><th>cpus / memoryGB (API)</th><th>MEM USAGE / LIMIT</th></tr></thead>
+    <tbody>
+      <tr><td>notes1</td><td><code>-p 3000:3000</code></td><td><code>60ec35836b00</code></td><td>2 / 7.8</td><td>17.07MiB / 7.756GiB</td></tr>
+      <tr><td>notes2</td><td><code>-p 3001:3000 --cpus=0.5 --memory=128m</code></td><td><code>2730e16a690c</code></td><td>2 / 7.8</td><td><strong>15.32MiB / 128MiB</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Trường <code>host</code> là ID container nên khác nhau, nhưng <code>cpus</code> và <code>memoryGB</code> giống nhau và bằng máy Codespace. Giới hạn nằm ở cgroups: trong notes2, <code>/sys/fs/cgroup/memory.max</code> là <code>134217728</code> (128 MiB) và <code>cpu.max</code> là <code>50000 100000</code> (0,5 CPU).</p>
+
+  <h2>4. So sánh máy ảo và container</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Tiêu chí</th><th>Codespace (máy ảo)</th><th>Container notes2</th></tr></thead>
+    <tbody>
+      <tr><td>Thời gian khởi động</td><td>2 phút 43 giây (rebuild, bài 1)</td><td>0,40–0,59 giây: 4 lần <code>time docker run --rm notes-api:1.0 node -e "1"</code> cho 0,398; 0,396; 0,449; 0,587 giây</td></tr>
+      <tr><td>Kích thước</td><td>Đĩa 32 GB; hạn mức lưu trữ 15 GB-tháng</td><td>63,3 MB nội dung image (251 MB trên đĩa sau giải nén). Docker 29 thay cột SIZE bằng hai cột CONTENT SIZE và DISK USAGE</td></tr>
+      <tr><td>Nhân hệ điều hành</td><td>Nhân của máy ảo Azure: <code>6.8.0-1070-azure</code></td><td>Dùng chung: <code>docker exec notes1 uname -r</code> cũng là <code>6.8.0-1070-azure</code></td></tr>
+      <tr><td>Mức cô lập</td><td>Cao: nhân riêng, tách bằng hypervisor ở mức phần cứng ảo</td><td>Thấp hơn: chung nhân với máy chủ, chỉ tách bằng namespaces (tiến trình, mạng, hostname) và cgroups (CPU, RAM)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>5. Mô phỏng CloudSim Plus</h2>
+  <p>Kịch bản gốc <code>BasicFirstExample</code>: 1 host 8 lõi (1000 MIPS/lõi, RAM 2048 MB), 2 VM mỗi VM 4 lõi và 512 MB RAM, 4 cloudlet mỗi cloudlet 2 lõi và 10 000 MI. Mỗi lần chỉ đổi một yếu tố so với bản gốc.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Lần</th><th>Thay đổi</th><th>Hoàn thành cloudlet cuối (giây mô phỏng)</th><th>Quan sát</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>Giữ nguyên</td><td>20,1</td><td>4/4 cloudlet xong, cùng chạy từ 0,1 đến 20,1</td></tr>
+      <tr><td>1</td><td><code>VMS</code> 2 → 4</td><td>45,6</td><td>Log: "2 of the requested 4 VMs couldn't be created". Host 8 lõi chỉ chứa được 2 VM 4 lõi. Broker thử tạo lại VM 2, 3 (lúc 5,10); 4 cloudlet chạy trên VM 0, 1 từ 25,6 đến 45,6</td></tr>
+      <tr><td>2</td><td><code>CLOUDLETS</code> 4 → 8</td><td>40,1 (chỉ 4/8 xong)</td><td>Cả 8 cloudlet được gửi vào VM cùng lúc; 4 cloudlet đầu mất 40 giây, gấp đôi lần 0. Cloudlet 4–7 báo thiếu RAM 256 MB và băng thông 500 Mbps của VM; VM bị hủy lúc 40,22 khi chúng vẫn đang chờ, nên không hoàn thành</td></tr>
+      <tr><td>3</td><td><code>CloudletSchedulerSpaceShared</code></td><td>20,1</td><td>Giống lần 0: mỗi VM 4 lõi vừa đủ cho 2 cloudlet × 2 lõi, không cloudlet nào phải xếp hàng</td></tr>
+      <tr><td>Bổ sung</td><td>SpaceShared và 8 cloudlet</td><td>40,3</td><td>8/8 xong: đợt 1 từ 0,1 đến 20,1; đợt 2 xếp hàng, chạy từ 20,2 đến 40,3</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note">Bản CloudSim Plus hiện tại (commit 302707c) đặt tên hằng số là <code>HOST_CORES</code>, <code>VM_CORES</code> thay cho <code>HOST_PES</code>, <code>VM_PES</code> và tạo máy ảo bằng <code>VmSimple.of(…)</code>; lần 3 thêm <code>vm.setCloudletScheduler(new CloudletSchedulerSpaceShared())</code> ngay sau đó. <code>bootstrap.sh</code> chỉ build khi chưa có file jar, nên sau mỗi lần sửa mã phải chạy <code>mvn -DskipTests package</code> trước, nếu không kết quả vẫn là của bản cũ.</p>
+
+  <h2>6. Câu hỏi phản biện</h2>
+  <p><strong>Câu 1. Vì sao notes2 vẫn báo memoryGB bằng RAM máy chủ?</strong> <code>os.totalmem()</code> đọc <code>/proc/meminfo</code> của nhân dùng chung, mà tệp này không bị cgroups thu nhỏ. Giới hạn 128 MB là của cgroups, nằm ở <code>/sys/fs/cgroup/memory.max</code>, và ứng dụng phải tự đọc mới biết. Hệ quả: nếu ứng dụng tự điều chỉnh theo RAM nó "thấy" (kích thước heap, bộ nhớ đệm, số worker) thì có thể vượt 128 MB và bị nhân kill do hết bộ nhớ (mã thoát 137). Với Node.js nên đặt rõ <code>--max-old-space-size</code> nhỏ hơn giới hạn; với Java nên dùng JVM nhận biết container và đặt <code>-XX:MaxRAMPercentage</code>.</p>
+  <p><strong>Câu 2. Time-shared và space-shared khác nhau ra sao?</strong> Ở lần 3 không thấy khác biệt vì số lõi cloudlet cần vừa bằng số lõi VM. Khi tăng lên 8 cloudlet, khác biệt hiện rõ. Time-shared (lần 2) nhận cả 8 cloudlet vào VM cùng lúc: 4 cloudlet đầu mất 40 giây thay vì 20, còn 4 cloudlet sau kẹt vì thiếu RAM và không xong. Space-shared (lần bổ sung) cho mỗi cloudlet giữ trọn lõi và bắt cloudlet sau xếp hàng: thời điểm hoàn thành tăng theo bậc (20,1 rồi 40,3) nhưng cả 8 đều xong. Với gói giá rẻ, nhà cung cấp hướng thị trường sẽ chọn kiểu time-shared vì có thể xếp nhiều khách hơn trên cùng phần cứng (bán vượt tài nguyên) nên giá thấp, đổi lại hiệu năng không ổn định. Gói cao cấp mới dành riêng lõi theo kiểu space-shared.</p>
+  <p><strong>Câu 3. Mô phỏng giúp gì, sai lệch ở đâu?</strong> Mô phỏng cho phép thử nhiều cấu hình và chính sách trong vài giây mà không tốn tiền thuê. Ví dụ lần 1 cho thấy trước rằng host 8 lõi không chứa nổi 4 VM 4 lõi, và lần 2 cho thấy RAM của VM, chứ không phải CPU, mới là chỗ nghẽn. Kết quả có thể lệch thực tế vì mô hình bỏ qua độ trễ và nghẽn mạng thật, I/O đĩa, nhiễu từ máy khác dùng chung phần cứng, chi phí của chính lớp ảo hóa, lỗi phần cứng và tải thay đổi theo thời gian. Ngoài ra, kết quả còn phụ thuộc vào cách cài đặt mô phỏng: lần 2 cho thấy cloudlet có thể "biến mất" khi VM bị hủy sớm, điều mà hệ thống thật thường xử lý bằng thử lại.</p>
 </main>
 </body>
 </html>
