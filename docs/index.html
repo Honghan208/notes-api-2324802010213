@@ -148,6 +148,130 @@ CMD ["node", "src/server.js"]</code></pre>
   <p><strong>Câu 1. Vì sao notes2 vẫn báo memoryGB bằng RAM máy chủ?</strong> <code>os.totalmem()</code> đọc <code>/proc/meminfo</code> của nhân dùng chung, mà tệp này không bị cgroups thu nhỏ. Giới hạn 128 MB là của cgroups, nằm ở <code>/sys/fs/cgroup/memory.max</code>, và ứng dụng phải tự đọc mới biết. Hệ quả: nếu ứng dụng tự điều chỉnh theo RAM nó "thấy" (kích thước heap, bộ nhớ đệm, số worker) thì có thể vượt 128 MB và bị nhân kill do hết bộ nhớ (mã thoát 137). Với Node.js nên đặt rõ <code>--max-old-space-size</code> nhỏ hơn giới hạn; với Java nên dùng JVM nhận biết container và đặt <code>-XX:MaxRAMPercentage</code>.</p>
   <p><strong>Câu 2. Time-shared và space-shared khác nhau ra sao?</strong> Ở lần 3 không thấy khác biệt vì số lõi cloudlet cần vừa bằng số lõi VM. Khi tăng lên 8 cloudlet, khác biệt hiện rõ. Time-shared (lần 2) nhận cả 8 cloudlet vào VM cùng lúc: 4 cloudlet đầu mất 40 giây thay vì 20, còn 4 cloudlet sau kẹt vì thiếu RAM và không xong. Space-shared (lần bổ sung) cho mỗi cloudlet giữ trọn lõi và bắt cloudlet sau xếp hàng: thời điểm hoàn thành tăng theo bậc (20,1 rồi 40,3) nhưng cả 8 đều xong. Với gói giá rẻ, nhà cung cấp hướng thị trường sẽ chọn kiểu time-shared vì có thể xếp nhiều khách hơn trên cùng phần cứng (bán vượt tài nguyên) nên giá thấp, đổi lại hiệu năng không ổn định. Gói cao cấp mới dành riêng lõi theo kiểu space-shared.</p>
   <p><strong>Câu 3. Mô phỏng giúp gì, sai lệch ở đâu?</strong> Mô phỏng cho phép thử nhiều cấu hình và chính sách trong vài giây mà không tốn tiền thuê. Ví dụ lần 1 cho thấy trước rằng host 8 lõi không chứa nổi 4 VM 4 lõi, và lần 2 cho thấy RAM của VM, chứ không phải CPU, mới là chỗ nghẽn. Kết quả có thể lệch thực tế vì mô hình bỏ qua độ trễ và nghẽn mạng thật, I/O đĩa, nhiễu từ máy khác dùng chung phần cứng, chi phí của chính lớp ảo hóa, lỗi phần cứng và tải thay đổi theo thời gian. Ngoài ra, kết quả còn phụ thuộc vào cách cài đặt mô phỏng: lần 2 cho thấy cloudlet có thể "biến mất" khi VM bị hủy sớm, điều mà hệ thống thật thường xử lý bằng thử lại.</p>
+
+  <h1 id="bai3">Bài 3: Lưu trữ phân tán – NoSQL và lưu trữ đối tượng</h1>
+  <p>API notes có thêm cơ sở dữ liệu MongoDB Atlas (project <code>cloud-lab</code>, Cluster0 gói Free M0, AWS Singapore, replica set 3 nút) và kho tệp đính kèm Supabase Storage (bucket <code>attachments</code>, Public). Chuỗi kết nối và khóa nằm trong <code>.env</code>, không commit.</p>
+
+  <h2>1. API CRUD và tệp đính kèm</h2>
+  <table>
+    <thead><tr><th>Thao tác</th><th>Yêu cầu</th><th>Mã trả về</th></tr></thead>
+    <tbody>
+      <tr><td>Tạo ghi chú</td><td>POST /notes</td><td>201</td></tr>
+      <tr><td>Lọc theo tag / xem một ghi chú</td><td>GET /notes?tag=nosql, GET /notes/:id</td><td>200</td></tr>
+      <tr><td>Sửa</td><td>PUT /notes/:id</td><td>200</td></tr>
+      <tr><td>Xóa / xem lại sau khi xóa</td><td>DELETE /notes/:id, GET /notes/:id</td><td>204 / 404</td></tr>
+      <tr><td>Id hợp lệ nhưng không tồn tại</td><td>GET /notes/000000000000000000000000</td><td>404</td></tr>
+      <tr><td>Id sai định dạng (CastError)</td><td>GET /notes/abc</td><td>400</td></tr>
+      <tr><td>Thiếu title (ValidationError)</td><td>POST /notes {"content":"…"}</td><td>400</td></tr>
+      <tr><td>Tải tệp thiếu trường file</td><td>POST /notes/:id/attachment</td><td>400</td></tr>
+      <tr><td>Tải tệp lên Supabase</td><td>POST /notes/:id/attachment -F file=@note.txt</td><td>200, có attachmentUrl</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2. Hiệu quả chỉ mục (scripts/explain.js)</h2>
+  <p>2.000 ghi chú mẫu (scripts/seed.js) cộng 1 ghi chú tạo khi thử API; truy vấn <code>{ tags: 'docker' }</code>:</p>
+  <table>
+    <thead><tr><th>Cách truy vấn</th><th>docsExamined</th><th>nReturned</th><th>ms</th></tr></thead>
+    <tbody>
+      <tr><td>Quét toàn bộ (hint $natural)</td><td>2001</td><td>571</td><td>1</td></tr>
+      <tr><td>Dùng chỉ mục tags_1</td><td>571</td><td>571</td><td>1</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Tỉ số docsExamined = 2001 / 571 ≈ 3,5 lần.</strong> Dùng chỉ mục thì số tài liệu phải đọc đúng bằng số tài liệu trả về.</p>
+
+  <h2>3. Nhân bản: Atlas và HDFS</h2>
+  <p>Atlas Overview và lệnh <code>hello</code> (scripts/replica.js) cho thấy replica set <code>atlas-w2vcc9-shard-0</code> gồm 3 nút: shard-00-02 là PRIMARY, shard-00-00 và shard-00-01 là SECONDARY.</p>
+  <svg xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto" viewBox="0 0 1000 640" font-family="DejaVu Sans, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/></marker>
+  </defs>
+  <rect width="1000" height="640" fill="#fff"/>
+  <text x="500" y="28" text-anchor="middle" font-size="18" font-weight="bold">So sánh nhân bản: MongoDB Atlas (replica set 3 nút) và HDFS (3 bản sao mỗi khối)</text>
+
+  <!-- ATLAS -->
+  <rect x="20" y="45" width="470" height="400" rx="10" fill="#f1f8f1" stroke="#2e7d32"/>
+  <text x="255" y="70" text-anchor="middle" font-size="15" font-weight="bold" fill="#1b5e20">MongoDB Atlas – Cluster0 (M0, AWS Singapore)</text>
+  <rect x="160" y="85" width="190" height="44" rx="6" fill="#fff" stroke="#555"/>
+  <text x="255" y="103" text-anchor="middle" font-weight="bold">Ứng dụng notes-api</text>
+  <text x="255" y="120" text-anchor="middle" font-size="11">Node.js + Mongoose (Codespace)</text>
+  <line x1="255" y1="129" x2="255" y2="178" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <text x="262" y="158" font-size="11">đọc / ghi</text>
+  <rect x="150" y="180" width="210" height="60" rx="8" fill="#2e7d32"/>
+  <text x="255" y="203" text-anchor="middle" fill="#fff" font-weight="bold">PRIMARY</text>
+  <text x="255" y="221" text-anchor="middle" fill="#fff" font-size="11">shard-00-02 · nhận mọi thao tác ghi</text>
+  <text x="255" y="234" text-anchor="middle" fill="#fff" font-size="10">ghi vào oplog</text>
+  <rect x="40" y="320" width="190" height="60" rx="8" fill="#a5d6a7" stroke="#2e7d32"/>
+  <text x="135" y="344" text-anchor="middle" font-weight="bold">SECONDARY</text>
+  <text x="135" y="362" text-anchor="middle" font-size="11">shard-00-00 · bản sao đầy đủ</text>
+  <rect x="280" y="320" width="190" height="60" rx="8" fill="#a5d6a7" stroke="#2e7d32"/>
+  <text x="375" y="344" text-anchor="middle" font-weight="bold">SECONDARY</text>
+  <text x="375" y="362" text-anchor="middle" font-size="11">shard-00-01 · bản sao đầy đủ</text>
+  <line x1="200" y1="240" x2="140" y2="318" stroke="#2e7d32" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="310" y1="240" x2="370" y2="318" stroke="#2e7d32" stroke-width="2" marker-end="url(#g)"/>
+  <text x="60" y="285" font-size="11" fill="#1b5e20">sao chép oplog</text>
+  <text x="385" y="285" font-size="11" fill="#1b5e20">sao chép oplog</text>
+  <line x1="230" y1="350" x2="278" y2="350" stroke="#888" stroke-dasharray="4 3"/>
+  <text x="255" y="400" text-anchor="middle" font-size="11" fill="#444">heartbeat giữa các nút; primary hỏng → 2 nút còn lại</text>
+  <text x="255" y="415" text-anchor="middle" font-size="11" fill="#444">(đa số 2/3) bầu một secondary lên làm primary</text>
+  <text x="255" y="434" text-anchor="middle" font-size="11" font-weight="bold" fill="#1b5e20">Đơn vị nhân bản: TOÀN BỘ tập dữ liệu</text>
+
+  <!-- HDFS -->
+  <rect x="510" y="45" width="470" height="400" rx="10" fill="#eef3fb" stroke="#1565c0"/>
+  <text x="745" y="70" text-anchor="middle" font-size="15" font-weight="bold" fill="#0d47a1">HDFS (GFS tương tự: Master / Chunkserver)</text>
+  <rect x="530" y="85" width="130" height="44" rx="6" fill="#fff" stroke="#555"/>
+  <text x="595" y="103" text-anchor="middle" font-weight="bold">Client</text>
+  <text x="595" y="120" text-anchor="middle" font-size="11">đọc / ghi tệp</text>
+  <rect x="760" y="85" width="200" height="56" rx="8" fill="#1565c0"/>
+  <text x="860" y="106" text-anchor="middle" fill="#fff" font-weight="bold">NameNode</text>
+  <text x="860" y="123" text-anchor="middle" fill="#fff" font-size="11">chỉ giữ metadata:</text>
+  <text x="860" y="136" text-anchor="middle" fill="#fff" font-size="10">tệp → khối → DataNode nào</text>
+  <line x1="660" y1="104" x2="758" y2="104" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <text x="707" y="96" text-anchor="middle" font-size="10">1. hỏi vị trí</text>
+  <!-- datanodes -->
+  <g font-size="11">
+    <rect x="525" y="250" width="105" height="110" rx="8" fill="#bbdefb" stroke="#1565c0"/>
+    <text x="577" y="268" text-anchor="middle" font-weight="bold">DataNode 1</text>
+    <rect x="540" y="280" width="75" height="22" fill="#fff" stroke="#1565c0"/><text x="577" y="295" text-anchor="middle">Khối B1</text>
+    <rect x="540" y="310" width="75" height="22" fill="#ffe0b2" stroke="#ef6c00"/><text x="577" y="325" text-anchor="middle">Khối B2</text>
+    <rect x="640" y="250" width="105" height="110" rx="8" fill="#bbdefb" stroke="#1565c0"/>
+    <text x="692" y="268" text-anchor="middle" font-weight="bold">DataNode 2</text>
+    <rect x="655" y="280" width="75" height="22" fill="#fff" stroke="#1565c0"/><text x="692" y="295" text-anchor="middle">Khối B1</text>
+    <rect x="755" y="250" width="105" height="110" rx="8" fill="#bbdefb" stroke="#1565c0"/>
+    <text x="807" y="268" text-anchor="middle" font-weight="bold">DataNode 3</text>
+    <rect x="770" y="280" width="75" height="22" fill="#fff" stroke="#1565c0"/><text x="807" y="295" text-anchor="middle">Khối B1</text>
+    <rect x="770" y="310" width="75" height="22" fill="#ffe0b2" stroke="#ef6c00"/><text x="807" y="325" text-anchor="middle">Khối B2</text>
+    <rect x="870" y="250" width="100" height="110" rx="8" fill="#bbdefb" stroke="#1565c0"/>
+    <text x="920" y="268" text-anchor="middle" font-weight="bold">DataNode 4</text>
+    <rect x="882" y="310" width="75" height="22" fill="#ffe0b2" stroke="#ef6c00"/><text x="920" y="325" text-anchor="middle">Khối B2</text>
+  </g>
+  <line x1="595" y1="129" x2="595" y2="248" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <text x="600" y="200" font-size="10">2. đọc/ghi trực tiếp</text>
+  <text x="600" y="213" font-size="10">với DataNode</text>
+  <line x1="860" y1="141" x2="860" y2="248" stroke="#1565c0" stroke-dasharray="4 3"/>
+  <text x="866" y="200" font-size="10" fill="#0d47a1">heartbeat +</text>
+  <text x="866" y="213" font-size="10" fill="#0d47a1">block report</text>
+  <text x="745" y="385" text-anchor="middle" font-size="11" fill="#444">Tệp chia thành khối 128 MB; mỗi khối có 3 bản trên 3 DataNode khác nhau</text>
+  <text x="745" y="400" text-anchor="middle" font-size="11" fill="#444">(rack-aware). DataNode chết → NameNode ra lệnh chép bù cho đủ 3 bản</text>
+  <text x="745" y="434" text-anchor="middle" font-size="11" font-weight="bold" fill="#0d47a1">Đơn vị nhân bản: TỪNG KHỐI của tệp</text>
+
+  <!-- comparison -->
+  <rect x="20" y="460" width="960" height="165" rx="10" fill="#fafafa" stroke="#999"/>
+  <text x="40" y="486" font-weight="bold" fill="#1b5e20">GIỐNG NHAU</text>
+  <text x="40" y="506">• Đều giữ 3 bản dữ liệu trên 3 máy khác nhau để chịu được hỏng 1 máy mà không mất dữ liệu (sẵn sàng cao, chịu lỗi).</text>
+  <text x="40" y="524">• Đều tự phát hiện nút hỏng qua heartbeat và tự phục hồi, người dùng không phải can thiệp.</text>
+  <text x="40" y="552" font-weight="bold" fill="#b71c1c">KHÁC NHAU</text>
+  <text x="40" y="572">• Đơn vị nhân bản: Atlas chép cả tập dữ liệu sang mỗi secondary; HDFS chép từng khối 128 MB, các khối của một tệp rải trên nhiều DataNode.</text>
+  <text x="40" y="590">• Vai trò nút: Atlas có primary nhận ghi + secondary dự phòng, tự bầu lại primary; HDFS có NameNode chỉ giữ metadata (không giữ dữ liệu)</text>
+  <text x="52" y="606">và DataNode giữ dữ liệu – NameNode là điểm hỏng đơn nếu không cấu hình HA.</text>
+</svg>
+
+
+  <h2>4. Câu hỏi phản biện</h2>
+  <p><strong>Câu 1. 2 triệu tài liệu thì sao?</strong> docsExamined của cách quét toàn bộ tăng tuyến tính: từ 2.001 lên khoảng 2.000.000 tài liệu cho mỗi truy vấn, tức thời gian từ 1 ms lên cỡ 1 giây (ước lượng). Dùng chỉ mục thì chỉ đọc các tài liệu khớp, khoảng 571.000. Tỉ số vẫn khoảng 3,5 lần vì tag docker chiếm 2/7 dữ liệu; chỉ mục có lợi hơn nhiều với điều kiện chọn lọc hơn. Route GET /notes còn sắp xếp theo createdAt, nên với 571.000 kết quả MongoDB phải sắp xếp trong bộ nhớ; cần chỉ mục ghép <code>{ tags: 1, createdAt: -1 }</code>. Với gói M0, mỗi truy vấn quét lâu chiếm tài nguyên dùng chung nên hạn mức 100 thao tác/giây bị nghẽn sớm. Ngoài ra, hiện 2.001 tài liệu chiếm 386 KB dữ liệu và khoảng 205 KB chỉ mục; nhân 1.000 lần được khoảng 590 MB, vượt giới hạn 512 MB của M0.</p>
+  <p><strong>Câu 2. Vì sao lưu tệp trên Supabase và chỉ lưu URL?</strong> Một tài liệu MongoDB tối đa 16 MB và cả cụm M0 chỉ có 512 MB, còn Supabase cho 1 GB lưu trữ tệp. Tệp trong tài liệu làm phình dữ liệu cần nạp vào bộ nhớ, làm mọi truy vấn và sao lưu nặng hơn, và bị nhân 3 lần theo replica set. Kho đối tượng phục vụ tệp trực tiếp qua URL công khai (có CDN) mà không đi qua API, rẻ hơn và tách lưu trữ có cấu trúc khỏi dữ liệu nhị phân.</p>
+  <p><strong>Câu 3. Con số 3 trong Atlas và HDFS?</strong> Mục tiêu chung là chịu lỗi và sẵn sàng cao: mất 1 máy vẫn còn 2 bản dữ liệu, và với Atlas vẫn còn đa số 2/3 để bầu primary mới. Khác nhau ở đơn vị nhân bản: Atlas nhân bản toàn bộ tập dữ liệu qua oplog (primary nhận ghi, secondary chép lại); HDFS nhân bản từng khối 128 MB của tệp, các khối rải trên nhiều DataNode, còn NameNode chỉ giữ metadata.</p>
+
 </main>
 </body>
 </html>
